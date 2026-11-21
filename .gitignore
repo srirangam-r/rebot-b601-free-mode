@@ -9,3 +9,7 @@ b601free/poses.json
 b601free/logs/
 data/
 *.npz
+b601free/poses.bak.json
+b601free/poses.old-*.json
+b601free/xylo_ref.json
+b601free/xylo_ref_bars.png

@@ -49,6 +49,7 @@ class Camera:
         self.cap = None
         self._lock = threading.Lock()
         self._frame: np.ndarray | None = None
+        self._raw: np.ndarray | None = None       # latest full-resolution BGR frame (for vision checks)
         self._t = 0.0
         self.n_frames = 0
         self._stop = threading.Event()
@@ -98,20 +99,23 @@ class Camera:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
                 fails += 1
-                if fails in (5, 50) or fails % 300 == 0:
-                    logger.warning("camera %s: %d consecutive read failures", self.name, fails)
-                if fails % 60 == 0:  # try to reopen (USB hiccup)
+                if fails == 50:
+                    logger.warning("camera %s: no frames (unplugged?) - retrying quietly every 5 s", self.name)
+                if fails >= 50:   # unplugged: back off, retry every ~5 s without flooding the terminal
+                    time.sleep(0.1)
+                if fails % 50 == 0:
                     try:
                         self.cap.release()
                         self.cap = self._open()
-                    except Exception as e:
-                        logger.error("camera %s reopen failed: %s", self.name, e)
+                        logger.warning("camera %s: reconnected", self.name)
+                    except Exception:
+                        pass
                 time.sleep(0.01)
                 continue
             fails = 0
             img = process(bgr, self.size)
             with self._lock:
-                self._frame, self._t = img, time.perf_counter()
+                self._frame, self._raw, self._t = img, bgr, time.perf_counter()
                 self.n_frames += 1
             if is_file:
                 time.sleep(1.0 / max(self.fps, 1))
@@ -120,6 +124,11 @@ class Camera:
         """Latest processed frame (256,256,3) uint8 RGB and its age in seconds."""
         with self._lock:
             return self._frame, time.perf_counter() - self._t
+
+    def read_raw(self) -> tuple[np.ndarray | None, float]:
+        """Latest full-resolution BGR frame and its age in seconds."""
+        with self._lock:
+            return self._raw, time.perf_counter() - self._t
 
     def stop(self):
         self._stop.set()

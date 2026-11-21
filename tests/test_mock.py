@@ -65,8 +65,8 @@ def test_free_mode_record_and_replay(tmp_path):
     (tmp_path / "scales.json").write_text(json.dumps(zero))   # the mock has no gravity to cancel
     args = ["--out", str(tmp_path / "data"), "--instructions", "hit the red bar|hit the blue bar",
             "--gravity_scales", str(tmp_path / "scales.json"), "--poses", str(tmp_path / "poses.json"),
-            "--samples_file", str(tmp_path / "samples.json"), "--log_dir", str(tmp_path / "logs")]
-    out = _run("b601free.free", args, [(2, "f"), (4, "r"), (3, "s"), (12, "1"), (1, "q")])
+            "--samples_file", str(tmp_path / "samples.json"), "--log_dir", str(tmp_path / "logs"), "--overhead", ""]
+    out = _run("b601free.free", args, [(2, "f"), (4, "r"), (3, "s"), (12, "t"), (0.3, "1"), (1, "q")])
     assert "Traceback" not in out, out[-2000:]
     eps = sorted((tmp_path / "data").glob("*/ep_*.npz"))
     assert len(eps) == 1, out[-2000:]
@@ -78,15 +78,65 @@ def test_free_mode_record_and_replay(tmp_path):
     assert list((tmp_path / "logs").glob("free_*.csv"))
 
 
-def test_xylophone_player(tmp_path):
-    poses = {str(i): {"q_deg": [-15 + 10 * (i - 1), 40, 60, -30, 0, 0, 0]} for i in range(1, 4)}
-    poses["0"] = {"q_deg": [-15, 40, 60, -38, 0, 0, 0]}
-    poses["9"] = {"q_deg": [0, 55, 60, -10, 0, 0, 0]}
+def _music_files(tmp_path, contact_offset):
+    zero = {j: 0.0 for j in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll")}
+    (tmp_path / "scales.json").write_text(json.dumps(zero))
+    h1, h8 = [40, 62, 20, 20, 0, 0], [58, 63, 22, 18, 0, 0]
+    add = lambda p_, d: [x + y for x, y in zip(p_, d)]
+    poses = {"1": {"q_deg": h1 + [0]}, "c1": {"q_deg": add(h1, contact_offset) + [0]},
+             "8": {"q_deg": h8 + [0]}, "c8": {"q_deg": add(h8, [0, 1, 3, -6, 0, 0]) + [0]},
+             "9": {"q_deg": [49, 55, 20, 15, 0, 0, 0]}}
     (tmp_path / "poses.json").write_text(json.dumps(poses))
-    out = _run("b601free.xylo", ["--poses", str(tmp_path / "poses.json"), "--gravity_scales", "/nonexistent"],
-               [(5, "1"), (0.2, "3"), (2, "q")])
+    (tmp_path / "ref.json").write_text(json.dumps({"bars": [[0, i * 20.0, 100 - i] for i in range(8)],
+                                                    "fractions": [i / 7 for i in range(8)], "time": "test"}))
+    return ["--gravity_scales", str(tmp_path / "scales.json"), "--poses", str(tmp_path / "poses.json"),
+            "--samples_file", str(tmp_path / "s.json"), "--log_dir", str(tmp_path / "logs"), "--ready", "9",
+            "--xylo_ref", str(tmp_path / "ref.json"), "--overhead", ""]
+
+
+def test_music_mode_plays_inside_box(tmp_path):
+    args = _music_files(tmp_path, [0, 1, 3, -6, 0, 0])
+    out = _run("b601free.free", args, [(2, "m"), (0.5, "h"), (7, "m"), (1.5, "1"), (0.1, "5"), (0.1, "8"),
+                                        (3, " "), (0.3, "m"), (0.3, "q"), (0.3, "q")])
+    assert "Traceback" not in out and "STOPPED" not in out, out[-2000:]
+    assert "REFUSED: move the mallet near" in out            # entry from home is refused
+    assert "camera-blended bars [2, 3, 4, 5, 6, 7]" in out
+    assert all(f"hit {k}" in out for k in "158"), out[-2000:]
+
+
+def test_music_mode_refuses_posture_change_strike(tmp_path):
+    args = _music_files(tmp_path, [0, 3, 11, -17, -3, 0])    # contact 17 deg away from hover: not a short drop
+    out = _run("b601free.free", args, [(2, "h"), (7, "m"), (1, "q"), (0.3, "q")])
     assert "Traceback" not in out, out[-2000:]
-    assert "hit 1" in out and "hit 3" in out
+    assert "contact is 17 deg from hover" in out, out[-2000:]
+
+
+def test_virtual_friction_stops_creep(tmp_path):
+    """+0.3 N*m of gravity-model error on the lift joint: pure float drifts, virtual friction holds.
+    (The mock has no gravity, so the gravity model is zeroed and the error is injected explicitly.)"""
+    import math
+    from b601free import free as F
+    zero = {j: 0.0 for j in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_yaw", "wrist_roll")}
+    (tmp_path / "scales.json").write_text(json.dumps(zero))
+    drift = {}
+    for vf in (False, True):
+        sys.argv = ["free", "--mock", "--overhead", "", "--gravity_scales", str(tmp_path / "scales.json"),
+                    "--samples_file", str(tmp_path / "s.json")] + ([] if vf else ["--no_vfric"])
+        a = F.parse()
+        arm = F.make_follower(a); arm.cfg.gravity_compensation = True; arm.cfg.max_step_deg = None
+        fr = F.Free(arm, a); arm.connect(calibrate=False); ctl = arm.bus
+        ctl.pos[:6] = np.radians([0, 30, 40, -20, 0, 0])
+        t0 = time.perf_counter()
+        for i in range(40):
+            fr.tick(time.perf_counter() - t0, i); time.sleep(1 / 120)
+        fr.mode = "FREE"; q0 = math.degrees(ctl.pos[1])
+        for i in range(40, 280):
+            fr.tick(time.perf_counter() - t0, i)
+            c = list(ctl.cmd[1]); c[4] += 0.3; ctl.cmd[1] = tuple(c)
+            time.sleep(1 / 120)
+        drift[vf] = abs(math.degrees(ctl.pos[1]) - q0)
+        arm.disconnect(safe_zero=False)
+    assert drift[False] > 10.0 and drift[True] < 2.0, drift
 
 
 if __name__ == "__main__":

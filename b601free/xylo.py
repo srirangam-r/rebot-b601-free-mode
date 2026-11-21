@@ -127,6 +127,9 @@ class Player:
 
 
 def main():
+    raise SystemExit("b601free.xylo is retired: its automatic start move from home is not limited to the taught area.\n"
+                     "Use free mode instead:  python -m b601free.free   -> hand-guide the arm near the bars (f) -> m\n"
+                     "(music mode only moves inside the box of your taught poses and stops on any collision).")
     args = parse()
     setup_logging(args.verbose)
     poses = json.loads(Path(args.poses).read_text()) if Path(args.poses).is_file() else {}
