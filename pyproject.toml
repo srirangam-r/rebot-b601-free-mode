@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "b601free"
+version = "0.1.0"
+description = "Gravity/friction-compensated free mode, kinesthetic demo record+replay and teleop for the Seeed reBot B601-RS, without LeRobot"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = ["numpy", "opencv-python", "motorbridge>=0.5.6", "motorbridge-smart-servo>=0.0.4"]
+
+[project.optional-dependencies]
+preview = ["pillow"]
+test = ["pytest"]
+
+[tool.setuptools]
+packages = ["b601free"]
+
+[tool.setuptools.package-data]
+b601free = ["assets/*.urdf"]

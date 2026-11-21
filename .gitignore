@@ -1,0 +1,11 @@
+__pycache__/
+*.egg-info/
+.venv/
+# per-robot state written next to the code (calibration, poses, session logs, recorded data)
+b601free/gravity_fit.json
+b601free/gravity_samples.json
+b601free/gravity_scales.json
+b601free/poses.json
+b601free/logs/
+data/
+*.npz
